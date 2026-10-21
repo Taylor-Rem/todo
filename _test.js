@@ -79,7 +79,7 @@ eq([again.decided.answer, again.decided.by, again.decided.acted], ['hosting: all
 let threw = false; try { api.applyDecision(after, p2.raw, 'hosting: gate', when); } catch { threw = true; }
 ok(threw, 'an entry is decided once');
 eq(api.cleanAnswer('a; b > c -- d\nnext'), 'a b c d next', 'the answer is cleaned like the hidden line');
-eq(api.cleanAnswer('x'.repeat(400)).length, 300, 'capped at 300');
+eq(api.cleanAnswer('x'.repeat(1200)).length, 1200, 'no length cap');
 // an entry with no hidden line: the Decided line goes last in the block
 const bare = '## 1. Now\n\n- [ ] **Say "go" when ready.**\n  - **1.** Read it.\n\n- [ ] **Next.**\n';
 const b2 = api.applyDecision(bare, '- [ ] **Say "go" when ready.**', 'go', when).split('\n');

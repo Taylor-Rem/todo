@@ -337,8 +337,8 @@
     return out;
   }
 
-  // What may sit in a Decided line (the same cleaning as the hidden line): no ; > -- or newline, 300 characters.
-  const cleanAnswer = (s) => String(s || '').replace(/[;>]|--/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300).trim();
+  // What may sit in a Decided line (the same cleaning as the hidden line): no ; > -- or newline; any length (the 300-character cap cut Taylor's B209 answer, 2026-10-21).
+  const cleanAnswer = (s) => String(s || '').replace(/[;>]|--/g, ' ').replace(/\s+/g, ' ').trim();
   function numberAnswer(ask, v) {
     const w = (ask.word || '').trim();
     if (w && N_TOKEN.test(w)) return w.replace(new RegExp(N_TOKEN.source), v);
@@ -445,7 +445,7 @@
     const d = drafts.get(it.id) || {};
     const nm = `ask-${btoa(unescape(encodeURIComponent(it.id))).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)}`;
     const other = (label) => `<label class="opt other"><input type="radio" name="${nm}" value="__other"${d.choice === '__other' ? ' checked' : ''}> ${label}</label>` +
-      `<input class="custom" type="text" maxlength="300" placeholder="your own answer, in your words" value="${esc(d.text || '')}">`;
+      `<textarea class="custom" rows="2" placeholder="your own answer, in your words">${esc(d.text || '')}</textarea>`;
     if (ask.kind === 'choice') {
       const pick = d.choice !== undefined ? d.choice : ask.recommended ? String(ask.recommended - 1) : '';
       return `<div class="ask" data-kind="choice">` + ask.options.map((o, k) =>
@@ -455,7 +455,7 @@
     }
     if (ask.kind === 'word') {
       return `<div class="ask" data-kind="word"><button type="button" class="primary decide" data-answer="${esc(ask.word)}">${inline(ask.word)}</button>` +
-        (ask.custom ? `<div class="or">or say something else:</div><input class="custom" type="text" maxlength="300" value="${esc(d.text || '')}"><button type="button" class="decide-custom">Send</button>` : '') + `</div>`;
+        (ask.custom ? `<div class="or">or say something else:</div><textarea class="custom" rows="2">${esc(d.text || '')}</textarea><button type="button" class="decide-custom">Send</button>` : '') + `</div>`;
     }
     if (ask.kind === 'number') {
       const v = d.number !== undefined ? d.number : ask.default;
@@ -465,10 +465,10 @@
       const parts = N_TOKEN.test(w) ? w.split(new RegExp(N_TOKEN.source)) : [w, ''];
       return `<div class="ask" data-kind="number"><label class="numlabel">${inline(parts[0])}${field}${inline(parts.slice(1).join('N'))}</label>` +
         `<button type="button" class="primary decide">Decide</button>` +
-        (ask.custom ? `<div class="or">or say something else:</div><input class="custom" type="text" maxlength="300" value="${esc(d.text || '')}"><button type="button" class="decide-custom">Send</button>` : '') + `</div>`;
+        (ask.custom ? `<div class="or">or say something else:</div><textarea class="custom" rows="2">${esc(d.text || '')}</textarea><button type="button" class="decide-custom">Send</button>` : '') + `</div>`;
     }
     if (ask.kind === 'text') {
-      return `<div class="ask" data-kind="text"><textarea class="custom" rows="3" maxlength="300" placeholder="your answer">${esc(d.text || '')}</textarea><button type="button" class="primary decide">Send</button></div>`;
+      return `<div class="ask" data-kind="text"><textarea class="custom" rows="3" placeholder="your answer">${esc(d.text || '')}</textarea><button type="button" class="primary decide">Send</button></div>`;
     }
     return '';
   }
@@ -484,7 +484,7 @@
   }
   // a quiet link at the foot of an open entry: clear it without doing it, and say why
   const cancelHtml = () => `<div class="cancelbox"><button type="button" class="linkish cancel-open">cancel this…</button>` +
-    `<div class="cancel-form hidden"><input class="why" type="text" maxlength="300" placeholder="why? (Flint records it and holds what waited on it)">` +
+    `<div class="cancel-form hidden"><input class="why" type="text" placeholder="why? (Flint records it and holds what waited on it)">` +
     `<button type="button" class="cancel-go">Cancel it</button><button type="button" class="linkish cancel-keep">keep it</button></div></div>`;
 
   function resourcesHtml(it) {
@@ -540,7 +540,7 @@
         const li = document.createElement('li'); li.innerHTML = '<div class="row"><span class="meta">nothing open here</span></div>'; ul.appendChild(li);
       }
       const add = document.createElement('li'); add.className = 'addrow';
-      add.innerHTML = `<form class="add"><input placeholder="add to this section…" maxlength="300"><button type="submit">Add</button></form>`;
+      add.innerHTML = `<form class="add"><input placeholder="add to this section…"><button type="submit">Add</button></form>`;
       add.querySelector('form').addEventListener('submit', (e) => { e.preventDefault(); const inp = add.querySelector('input'); if (inp.value.trim()) addItem(s, inp.value.trim(), inp); });
       ul.appendChild(add);
       sec.appendChild(ul); list.appendChild(sec);
