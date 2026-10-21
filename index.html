@@ -82,6 +82,37 @@
   .footer a { color: var(--muted); }
   .hidden { display: none !important; }
   .notice { background: var(--warn-bg); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin: 0 0 14px; }
+  /* B238: the ask, the decision, the resources */
+  .chip { display: inline-block; font-size: 11.5px; font-weight: 600; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 0 7px; margin-left: 4px; vertical-align: 2px; }
+  .chip.done-chip { color: var(--muted); border-color: var(--line); }
+  li.done .chip:not(.keep) { display: none; }
+  .decided.cancelled { border-style: dashed; }
+  .cancelbox { margin: 10px 0 0; font-size: 13px; }
+  .cancel-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .cancel-form .why { flex: 1 1 220px; min-width: 0; font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 10px; }
+  button.linkish { border: 0; background: none; padding: 2px 0; color: var(--muted); text-decoration: underline; font-size: 13px; }
+  .ask { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 4px 0 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .ask .opt { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
+  .ask .opt input { accent-color: var(--accent); }
+  .ask .rec { color: var(--muted); font-size: 13px; }
+  .ask .custom, .ask .num { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 10px; width: 100%; }
+  .ask .num { width: 6em; margin: 0 6px; }
+  .ask textarea.custom { resize: vertical; }
+  .ask .or { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .decided { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 4px 0 10px; }
+  .decided details { margin-top: 6px; font-size: 14px; }
+  button.copy { font-size: 11.5px; padding: 0 6px; margin-left: 4px; border-radius: 6px; vertical-align: 1px; }
+  .resources { margin: 8px 0 0; }
+  details.res { border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; background: var(--panel); }
+  details.res summary { cursor: pointer; padding: 6px 10px; font-size: 14px; }
+  .res-body { padding: 4px 12px 10px; font-size: 14px; }
+  .res-body img { max-width: 100%; height: auto; border-radius: 6px; }
+  .md h3, .md h4, .md h5, .md h6 { margin: 12px 0 4px; font-size: 15px; }
+  .md blockquote { margin: 4px 0 8px; padding: 2px 10px; border-left: 3px solid var(--line); color: var(--ink); }
+  .md table { border-collapse: collapse; margin: 6px 0 10px; font-size: 13.5px; display: block; overflow-x: auto; }
+  .md th, .md td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
+  .md pre { white-space: pre-wrap; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg); padding: 8px; border-radius: 6px; }
+  .md ul, .md ol { padding-left: 20px; }
 </style>
 </head>
 <body>
@@ -179,9 +210,28 @@
   }
 
   // ---- markdown ----------------------------------------------------------
+  // Pure functions from here to "---- render" (no DOM): tests/test_todo_queue.py and _test.js run them under node.
   const ITEM = /^- \[( |x|X)\] (.*)$/;
   const SECTION = /^## (.*)$/;
   const HIDDEN = /^\s*<!--[\s\S]*?-->\s*$/;
+  const HIDDEN_KV = /^\s*<!--\s*todo:([\s\S]*?)-->\s*$/;
+  // B238 (plan 77): the answer Taylor gave on this page, and the files an entry asks him to read
+  const DECIDED = /^\s*- \*\*Decided:\*\*\s*(.*?)\s*(?:_\(([^()]*)\)_)?\s*$/;
+  const CANCELLED = /^\s*- \*\*Cancelled:\*\*\s*(.*?)\s*(?:_\(([^()]*)\)_)?\s*$/;
+  const RESOURCES = /^\s*- \*\*Resources:\*\*\s*(.*)$/;
+  const BULLET = /^\s{2,}[-*] /;
+  const STEP = /^\s*- \*\*(\d+)\.\*\*/;
+  const ASK_KINDS = ['choice', 'word', 'number', 'text', 'do'];
+
+  function parseHidden(line, into) {
+    const m = line.match(HIDDEN_KV);
+    if (!m) return into;
+    for (const part of m[1].split(';')) {
+      const at = part.indexOf('=');
+      if (at > 0) into[part.slice(0, at).trim()] = part.slice(at + 1).trim();
+    }
+    return into;
+  }
 
   function parse(text) {
     const lines = text.split('\n');
@@ -194,57 +244,254 @@
       const im = line.match(ITEM);
       if (im && cur) {
         const body = [im[2]];
+        const meta = {}; let decided = null, cancelled = null, hiddenLine = -1; const resources = [];
         let j = i + 1;
         while (j < lines.length && (lines[j].startsWith('  ') || (!lines[j].trim() && j + 1 < lines.length && lines[j + 1].startsWith('  ')))) {
+          const l = lines[j];
           // a hidden metadata line (`<!-- todo: repeat_key=…; … -->`, B138) belongs to the entry but is never shown
-          if (!HIDDEN.test(lines[j])) body.push(lines[j]);
+          if (HIDDEN.test(l)) { parseHidden(l, meta); if (hiddenLine < 0) hiddenLine = j; }
+          else if (CANCELLED.test(l)) { const c = l.match(CANCELLED); cancelled = { reason: c[1].trim(), by: (c[2] || '').trim(), line: j }; }
+          else if (DECIDED.test(l)) { const d = l.match(DECIDED); decided = { answer: d[1].trim(), by: (d[2] || '').trim(), line: j }; }
+          else if (RESOURCES.test(l)) { for (const r of l.match(RESOURCES)[1].matchAll(/\[([^\]]+)\]\(([^)\s]+)\)/g)) resources.push({ name: r[1], path: r[2] }); }
+          else body.push(l);
           j++;
         }
-        const joined = body.map((b) => b.trim()).join(' ');
+        const plain = body.filter((l, k) => k === 0 || !BULLET.test(l));
+        const joined = plain.map((b) => b.trim()).join(' ');
         const bm = joined.match(/\*\*(.+?)\*\*/);
         const title = bm ? bm[1] : joined.slice(0, 120);
         let rest = bm ? joined.slice(bm.index + bm[0].length) : joined;
         const who = rest.match(/_\(([^)]*)\)_\s*$/);
         if (who) rest = rest.slice(0, who.index);
+        // the first paragraph (the title line and its wrapped text, before the first step or italic line): where an ask is read
+        const head = [im[2]];
+        for (const l of body.slice(1)) { const s = l.trim(); if (!s || s.startsWith('- ') || s.startsWith('_(')) break; head.push(s); }
+        if (decided) decided.acted = meta.acted || '';
+        // a cancellation counts as filed only by its own request (an earlier decision's acted= doesn't)
+        if (cancelled) cancelled.acted = /^cancel-/.test(meta.acted || '') ? meta.acted : '';
         id++;
-        cur.items.push({ id: `${cur.name}::${title}`.slice(0, 200), line: i, raw: line, done: im[1] !== ' ', title, rest: rest.trim(), who: who ? who[1] : '', bodyLines: body.slice(1), endLine: j });
+        cur.items.push({ id: `${cur.name}::${title}`.slice(0, 200), line: i, raw: line, done: im[1] !== ' ', title, rest: rest.trim(), who: who ? who[1] : '',
+          bodyLines: body.slice(1), endLine: j, meta, decided, cancelled, resources, hiddenLine, head: head.join(' ') });
         i = j - 1;
       }
     }
     return sections;
   }
 
+  // The ask (B238): the hidden line's `ask=` and its keys, else derived from the entry's words exactly as
+  // lib/todo_queue.py derive_ask does (a test holds the two to the same answer on the same file).
+  const QUOTE = /["“]([^"“”]{1,80})["”]/g;
+  const SAY = /(?:^|(?<=[.;:,(—–*])\s*|\b(?:then|or|and|just)\s+)[Ss]ay\s+(?=["“])/;
+  const RECOMMEND = /^\s*\((?:the recommendation|recommended|flint recommends|flint's pick)\b/i;
+  const N_TOKEN = /(?<![A-Za-z0-9])N(?![A-Za-z0-9])/;
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  function sayQuotes(line) {
+    const s = line.replace(/~~.*?~~/g, ' ');
+    const m = SAY.exec(s);
+    if (!m) return [];
+    const out = [];
+    const re = new RegExp(QUOTE.source, 'g'); re.lastIndex = m.index + m[0].length;
+    let q;
+    while ((q = re.exec(s))) out.push([q[1].trim().replace(/[.,;:]+$/, '').trim(), RECOMMEND.test(s.slice(q.index + q[0].length))]);
+    return out;
+  }
+
+  function deriveAsk(it) {
+    const none = { kind: 'do', options: [], recommended: null, custom: false, word: '', default: '' };
+    const cands = [it.head || it.title || ''].concat(it.bodyLines.filter((l) => STEP.test(l) && Number(l.match(STEP)[1]) <= 2));
+    for (const line of cands) {
+      const seen = new Set();
+      const qs = sayQuotes(line).filter(([p]) => p && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()));
+      if (!qs.length) continue;
+      const phrases = qs.map(([p]) => p);
+      const num = phrases.find((p) => N_TOKEN.test(p));
+      if (num) {
+        const pat = new RegExp('^' + reEsc(num).replace(new RegExp(N_TOKEN.source), '(\\d+)') + '$');
+        let def = '';
+        for (const p of phrases) { const d = p.match(pat); if (d) { def = d[1]; break; } }
+        return { ...none, kind: 'number', word: num, default: def };
+      }
+      if (phrases.length >= 2) {
+        const r = qs.findIndex(([, rec]) => rec);
+        return { ...none, kind: 'choice', options: phrases, recommended: r >= 0 ? r + 1 : null, custom: true };
+      }
+      return { ...none, kind: 'word', word: phrases[0] };
+    }
+    return none;
+  }
+
+  const yes = (v) => ['yes', 'true', '1', 'y'].includes(String(v).trim().toLowerCase());
+  function askOf(it) {
+    const m = it.meta || {};
+    const d = deriveAsk(it);
+    const kind = String(m.ask || '').trim().toLowerCase();
+    if (!ASK_KINDS.includes(kind)) return { ...d, derived: true };
+    const out = { kind, derived: false, options: String(m.options || '').split('|').map((o) => o.trim()).filter(Boolean),
+      word: String(m.word || '').trim(), default: String(m.default || '').trim() };
+    if (kind === d.kind) { if (!out.options.length) out.options = d.options; out.word = out.word || d.word; out.default = out.default || d.default; }
+    const rec = String(m.recommended || '').trim();
+    out.recommended = /^\d+$/.test(rec) && +rec >= 1 && +rec <= Math.max(out.options.length, 1) ? +rec
+      : (kind === 'choice' && d.kind === 'choice' && out.options.join('|') === d.options.join('|') ? d.recommended : null);
+    out.custom = m.custom !== undefined ? yes(m.custom) : kind === 'choice';
+    return out;
+  }
+
+  // What may sit in a Decided line (the same cleaning as the hidden line): no ; > -- or newline, 300 characters.
+  const cleanAnswer = (s) => String(s || '').replace(/[;>]|--/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300).trim();
+  function numberAnswer(ask, v) {
+    const w = (ask.word || '').trim();
+    if (w && N_TOKEN.test(w)) return w.replace(new RegExp(N_TOKEN.source), v);
+    return w ? `${w} ${v}` : String(v);
+  }
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const decidedLine = (answer, when) => `  - **Decided:** ${cleanAnswer(answer)} _(Taylor, ${stamp(when)}, web)_`;
+  const cancelledLine = (why, when) => `  - **Cancelled:** ${cleanAnswer(why)} _(Taylor, ${stamp(when)}, web)_`;
+  function findItem(text, raw) {
+    for (const s of parse(text)) for (const x of s.items) if (x.raw === raw) return x;
+    throw new Error('that item changed on disk since the page loaded; reloaded, try again');
+  }
+
+  // -> the file with the entry cleared without doing it (B238): ticked, with Taylor's reason above the hidden
+  // line. `[x]` stays the marker, so every reader of the file (the relay, the sessions) sees it closed.
+  function applyCancel(text, raw, why, when) {
+    const w = cleanAnswer(why);
+    if (!w) throw new Error('say why first');
+    const it = findItem(text, raw);
+    if (it.cancelled) throw new Error('already cancelled');
+    const lines = text.split('\n');
+    lines.splice(it.hiddenLine >= 0 ? it.hiddenLine : it.endLine, 0, cancelledLine(w, when));
+    lines[it.line] = lines[it.line].replace(/^- \[[ xX]\]/, '- [x]');
+    return lines.join('\n');
+  }
+
+  // -> the file with Taylor's answer under the entry whose first line is `raw`: the last continuation line,
+  // above the hidden line, which stays last. Throws when the entry is gone or already decided.
+  function applyDecision(text, raw, answer, when) {
+    const a = cleanAnswer(answer);
+    if (!a) throw new Error('an empty answer');
+    const it = findItem(text, raw);
+    if (it.decided) throw new Error(`already decided: ${it.decided.answer}`);
+    const lines = text.split('\n');
+    const at = it.hiddenLine >= 0 ? it.hiddenLine : it.endLine;
+    lines.splice(at, 0, decidedLine(a, when));
+    return lines.join('\n');
+  }
+
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   function inline(s) {
     // code first so nothing inside it gets touched
     const codes = [];
-    s = esc(s).replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return ` ${codes.length - 1} `; });
+    s = esc(s).replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
     s = s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/~~(.+?)~~/g, '<s>$1</s>')
       .replace(/(^|[\s(])_([^_]+)_(?=[\s).,;:]|$)/g, '$1<i>$2</i>')
       .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
       .replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<)]+)/g, (m, pre, u) => `${pre}<a href="${u.startsWith('http') ? u : 'https://' + u}" target="_blank" rel="noopener">${u}</a>`);
-    return s.replace(/ (\d+) /g, (_, i) => `<code>${codes[i]}</code>`);
+    return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[i]}</code>`);
   }
   function bodyHtml(item) {
-    // the item's own text (after the bold title), then its continuation as paragraphs / sub-bullets
-    const paras = [];
-    let buf = [];
-    const flush = () => { if (buf.length) { paras.push({ p: buf.join(' ') }); buf = []; } };
-    if (item.rest) buf.push(item.rest);
-    // item.rest already includes the wrapped continuation text, so only nested bullets need separate handling
-    const bullets = item.bodyLines.filter((l) => /^\s{2,}[-*] /.test(l)).map((l) => l.replace(/^\s+[-*] /, ''));
-    flush();
-    let html = paras.map((x) => `<p>${inline(x.p)}</p>`).join('');
-    if (bullets.length) {
-      // remove bullet text from the paragraph copy so it isn't shown twice
-      html = `<p>${inline(item.rest.split(/\s[-*] /)[0])}</p><ul>${bullets.map((b) => `<li>${inline(b)}</li>`).join('')}</ul>`;
-    }
+    // the item's own text (after the bold title), then its continuation bullets
+    const bullets = item.bodyLines.filter((l) => BULLET.test(l)).map((l) => l.replace(/^\s+[-*] /, ''));
+    let html = item.rest ? `<p>${inline(item.rest)}</p>` : '';
+    if (bullets.length) html += `<ul>${bullets.map((b) => `<li>${inline(b)}</li>`).join('')}</ul>`;
     if (item.who) html += `<p class="meta">${inline(item.who)}</p>`;
     return html;
   }
 
+  // A resource's markdown (a brief, a letter): headings, quotes, lists, tables, code blocks and paragraphs,
+  // every run of text through inline(). No library: what a brief needs, and nothing it can't escape.
+  function renderMd(md) {
+    const out = [];
+    const lines = String(md).replace(/\r/g, '').split('\n');
+    let i = 0;
+    while (i < lines.length) {
+      const l = lines[i];
+      if (!l.trim()) { i++; continue; }
+      if (/^```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out.push(`<pre>${esc(buf.join('\n'))}</pre>`); continue; }
+      const h = l.match(/^(#{1,6})\s+(.*)$/);
+      if (h) { const n = Math.min(h[1].length + 2, 6); out.push(`<h${n}>${inline(h[2])}</h${n}>`); i++; continue; }
+      if (/^\s*>/.test(l)) { const buf = []; while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, '')); out.push(`<blockquote>${inline(buf.join(' '))}</blockquote>`); continue; }
+      if (/^\s*\|.*\|\s*$/.test(l)) {
+        const rows = []; while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(lines[i++]);
+        const cells = (r) => r.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+        const body = rows.filter((r) => !/^\s*\|[\s:|-]+\|\s*$/.test(r));
+        out.push('<table>' + body.map((r, k) => '<tr>' + cells(r).map((c) => (k === 0 ? `<th>${inline(c)}</th>` : `<td>${inline(c)}</td>`)).join('') + '</tr>').join('') + '</table>');
+        continue;
+      }
+      if (/^\s*(?:[-*]|\d+\.)\s+/.test(l)) {
+        const ordered = /^\s*\d+\./.test(l); const buf = [];
+        while (i < lines.length && /^\s*(?:[-*]|\d+\.)\s+/.test(lines[i])) buf.push(lines[i++].replace(/^\s*(?:[-*]|\d+\.)\s+/, ''));
+        out.push(`<${ordered ? 'ol' : 'ul'}>${buf.map((b) => `<li>${inline(b)}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>`);
+        continue;
+      }
+      const buf = [];
+      while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|\s*>|\s*\||\s*(?:[-*]|\d+\.)\s+)/.test(lines[i])) buf.push(lines[i++].trim());
+      out.push(`<p>${inline(buf.join(' '))}</p>`);
+    }
+    return out.join('');
+  }
+  const resKind = (p) => (/\.(png|jpe?g|webp|gif)$/i.test(p) ? 'image' : /\.pdf$/i.test(p) ? 'pdf' : 'text');
+
   // ---- render ------------------------------------------------------------
   function setStatus(msg, err) { const s = $('status'); s.textContent = msg; s.className = 'status' + (err ? ' err' : ''); }
+
+  // what Taylor has picked or typed but not sent, by entry id, so the minute's reload doesn't lose it
+  const drafts = new Map();
+  const openRes = new Set();
+  const cache = new Map();          // a resource or a reply, fetched once a session
+
+  function askHtml(it, ask) {
+    const d = drafts.get(it.id) || {};
+    const nm = `ask-${btoa(unescape(encodeURIComponent(it.id))).replace(/[^A-Za-z0-9]/g, '').slice(0, 40)}`;
+    const other = (label) => `<label class="opt other"><input type="radio" name="${nm}" value="__other"${d.choice === '__other' ? ' checked' : ''}> ${label}</label>` +
+      `<input class="custom" type="text" maxlength="300" placeholder="your own answer, in your words" value="${esc(d.text || '')}">`;
+    if (ask.kind === 'choice') {
+      const pick = d.choice !== undefined ? d.choice : ask.recommended ? String(ask.recommended - 1) : '';
+      return `<div class="ask" data-kind="choice">` + ask.options.map((o, k) =>
+        `<label class="opt"><input type="radio" name="${nm}" value="${k}"${pick === String(k) ? ' checked' : ''}> ${inline(o)}` +
+        `${ask.recommended === k + 1 ? ' <span class="rec">(Flint recommends)</span>' : ''}</label>`).join('') +
+        (ask.custom ? other('something else') : '') + `<button type="button" class="primary decide">Decide</button></div>`;
+    }
+    if (ask.kind === 'word') {
+      return `<div class="ask" data-kind="word"><button type="button" class="primary decide" data-answer="${esc(ask.word)}">${inline(ask.word)}</button>` +
+        (ask.custom ? `<div class="or">or say something else:</div><input class="custom" type="text" maxlength="300" value="${esc(d.text || '')}"><button type="button" class="decide-custom">Send</button>` : '') + `</div>`;
+    }
+    if (ask.kind === 'number') {
+      const v = d.number !== undefined ? d.number : ask.default;
+      // the field sits where the word's N is: "refund window: [5]", "keep runs [90] days"
+      const field = `<input class="num" type="number" min="0" step="1" value="${esc(String(v || ''))}">`;
+      const w = ask.word || '';
+      const parts = N_TOKEN.test(w) ? w.split(new RegExp(N_TOKEN.source)) : [w, ''];
+      return `<div class="ask" data-kind="number"><label class="numlabel">${inline(parts[0])}${field}${inline(parts.slice(1).join('N'))}</label>` +
+        `<button type="button" class="primary decide">Decide</button>` +
+        (ask.custom ? `<div class="or">or say something else:</div><input class="custom" type="text" maxlength="300" value="${esc(d.text || '')}"><button type="button" class="decide-custom">Send</button>` : '') + `</div>`;
+    }
+    if (ask.kind === 'text') {
+      return `<div class="ask" data-kind="text"><textarea class="custom" rows="3" maxlength="300" placeholder="your answer">${esc(d.text || '')}</textarea><button type="button" class="primary decide">Send</button></div>`;
+    }
+    return '';
+  }
+
+  const stateHtml = (acted) => acted ? `<span class="state" data-acted="${esc(acted)}">Flint has it (${esc(acted)})</span>` : '<span class="state">sent to Flint: the laptop picks it up within two minutes</span>';
+  function decidedHtml(it) {
+    const d = it.decided;
+    return `<div class="decided"><div>Decided: <b>${inline(d.answer)}</b>${d.by ? ` <span class="meta">· ${esc(d.by)}</span>` : ''}</div><div class="meta">${stateHtml(d.acted)}</div><div class="reply"></div></div>`;
+  }
+  function cancelledHtml(it) {
+    const c = it.cancelled;
+    return `<div class="decided cancelled"><div>Cancelled: ${inline(c.reason)}${c.by ? ` <span class="meta">· ${esc(c.by)}</span>` : ''}</div><div class="meta">${stateHtml(c.acted)}</div><div class="reply"></div></div>`;
+  }
+  // a quiet link at the foot of an open entry: clear it without doing it, and say why
+  const cancelHtml = () => `<div class="cancelbox"><button type="button" class="linkish cancel-open">cancel this…</button>` +
+    `<div class="cancel-form hidden"><input class="why" type="text" maxlength="300" placeholder="why? (Flint records it and holds what waited on it)">` +
+    `<button type="button" class="cancel-go">Cancel it</button><button type="button" class="linkish cancel-keep">keep it</button></div></div>`;
+
+  function resourcesHtml(it) {
+    if (!it.resources.length) return '';
+    return `<div class="resources"><div class="meta">To read</div>` + it.resources.map((r) =>
+      `<details class="res" data-path="${esc(r.path)}"${openRes.has(it.id + '|' + r.path) ? ' open' : ''}><summary>${esc(r.name)}</summary><div class="res-body">loading…</div></details>`).join('') + `</div>`;
+  }
 
   function render() {
     const showDone = $('showDone').checked;
@@ -261,6 +508,7 @@
       sec.appendChild(h);
       const ul = document.createElement('ul');
       for (const it of items) {
+        const ask = askOf(it);
         const li = document.createElement('li');
         li.className = (it.done ? 'done' : '') + (openIds.has(it.id) ? ' open' : '');
         li.dataset.id = it.id;
@@ -268,7 +516,9 @@
         const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = it.done; cb.title = it.done ? 'reopen' : 'done';
         cb.addEventListener('change', () => toggle(it, cb, li));
         const text = document.createElement('div'); text.className = 'text';
-        text.innerHTML = `<div class="title">${inline(it.title)}</div><div class="body">${bodyHtml(it)}</div>`;
+        const chip = it.cancelled ? '<span class="chip done-chip keep">cancelled</span>' : it.decided ? '<span class="chip done-chip">decided</span>' : (!it.done && ask.kind !== 'do' ? '<span class="chip">your answer</span>' : '');
+        const top = it.cancelled ? cancelledHtml(it) : it.done ? '' : it.decided ? decidedHtml(it) : askHtml(it, ask);
+        text.innerHTML = `<div class="title">${inline(it.title)} ${chip}</div><div class="body">${top}${bodyHtml(it)}${resourcesHtml(it)}${it.done ? '' : cancelHtml()}</div>`;
         // the text is selectable (copying from it used to collapse the item); only the chevron toggles
         const chev = document.createElement('button'); chev.type = 'button'; chev.className = 'chev';
         chev.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
@@ -276,11 +526,15 @@
         setChev();
         chev.addEventListener('click', () => {
           li.classList.toggle('open');
-          if (li.classList.contains('open')) openIds.add(it.id); else openIds.delete(it.id);
+          if (li.classList.contains('open')) { openIds.add(it.id); expanded(it, li); } else openIds.delete(it.id);
           ls.set(LS.open, [...openIds].join('|'));
           setChev();
         });
         row.append(cb, text, chev); li.appendChild(row); ul.appendChild(li);
+        wireAsk(it, ask, li);
+        wireCancel(it, li);
+        if (ask.kind === 'do' && !it.done) addCopyButtons(li);
+        if (li.classList.contains('open')) expanded(it, li);
       }
       if (!items.length) {
         const li = document.createElement('li'); li.innerHTML = '<div class="row"><span class="meta">nothing open here</span></div>'; ul.appendChild(li);
@@ -294,8 +548,125 @@
     $('count').textContent = `${open} open of ${total}`;
     const { repo, path } = cfg();
     $('footer').innerHTML = `<a href="https://github.com/${esc(repo)}/blob/${DEFAULTS.branch}/${esc(path)}" target="_blank" rel="noopener">${esc(repo)}/${esc(path)}</a>` +
-      `<span>ticks are commits; the laptop pulls them within two minutes</span><a href="#" id="forget">disconnect</a>`;
+      `<span>ticks and answers are commits; the laptop pulls them within two minutes</span><a href="#" id="forget">disconnect</a>`;
     $('forget').addEventListener('click', (e) => { e.preventDefault(); ls.del(LS.token); location.reload(); });
+  }
+
+  // the controls: remember what's picked, send the answer
+  function wireAsk(it, ask, li) {
+    const box = li.querySelector('.ask');
+    if (!box) return;
+    const draft = () => { const d = drafts.get(it.id) || {}; drafts.set(it.id, d); return d; };
+    box.querySelectorAll('input[type=radio]').forEach((r) => r.addEventListener('change', () => { draft().choice = r.value; }));
+    const custom = box.querySelector('.custom');
+    if (custom) custom.addEventListener('input', () => {
+      const d = draft(); d.text = custom.value;
+      const other = box.querySelector('input[value="__other"]');
+      if (other && custom.value.trim()) { other.checked = true; d.choice = '__other'; }
+    });
+    const num = box.querySelector('.num');
+    if (num) num.addEventListener('input', () => { draft().number = num.value; });
+    const main = box.querySelector('.decide');
+    main.addEventListener('click', () => {
+      let answer = '';
+      if (ask.kind === 'choice') {
+        const r = box.querySelector('input[type=radio]:checked');
+        if (!r) { setStatus('pick one first', true); return; }
+        answer = r.value === '__other' ? (custom && custom.value) : ask.options[+r.value];
+      } else if (ask.kind === 'word') answer = main.dataset.answer;
+      else if (ask.kind === 'number') {
+        if (!/^\d+$/.test(num.value.trim())) { setStatus('a whole number, please', true); return; }
+        answer = numberAnswer(ask, num.value.trim());
+      } else answer = custom && custom.value;
+      decide(it, answer, li);
+    });
+    const alt = box.querySelector('.decide-custom');
+    if (alt) alt.addEventListener('click', () => decide(it, custom.value, li));
+  }
+
+  function wireCancel(it, li) {
+    const box = li.querySelector('.cancelbox');
+    if (!box) return;
+    const form = box.querySelector('.cancel-form'), why = box.querySelector('.why'), open = box.querySelector('.cancel-open');
+    const d = drafts.get(it.id + '|cancel');
+    if (d !== undefined) { why.value = d; form.classList.remove('hidden'); open.classList.add('hidden'); }
+    open.addEventListener('click', () => { form.classList.remove('hidden'); open.classList.add('hidden'); drafts.set(it.id + '|cancel', why.value); why.focus(); });
+    box.querySelector('.cancel-keep').addEventListener('click', () => { form.classList.add('hidden'); open.classList.remove('hidden'); drafts.delete(it.id + '|cancel'); });
+    why.addEventListener('input', () => drafts.set(it.id + '|cancel', why.value));
+    box.querySelector('.cancel-go').addEventListener('click', () => cancelItem(it, why.value, li));
+  }
+
+  // a `do` entry: a copy button beside every code span in its steps (the exact value to paste)
+  function addCopyButtons(li) {
+    li.querySelectorAll('.body ul li code').forEach((c) => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'copy'; b.textContent = 'copy'; b.title = 'copy this value';
+      b.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(c.textContent); b.textContent = 'copied'; } catch { b.textContent = 'select it'; }
+        setTimeout(() => (b.textContent = 'copy'), 1500);
+      });
+      c.after(b);
+    });
+  }
+
+  // when an entry opens: its resources (when their details open) and, once Flint has it, the reply
+  function expanded(it, li) {
+    li.querySelectorAll('details.res').forEach((det) => {
+      if (det.dataset.wired) return;
+      det.dataset.wired = '1';
+      const key = it.id + '|' + det.dataset.path;
+      const fill = () => { if (det.open) { openRes.add(key); loadResource(det); } else openRes.delete(key); };
+      det.addEventListener('toggle', fill);
+      if (det.open) loadResource(det);
+    });
+    const st = li.querySelector('.state[data-acted]');
+    if (st) loadReply(st.dataset.acted, st, li.querySelector('.decided .reply'));
+  }
+
+  async function fetchRaw(path) {
+    if (cache.has(path)) return cache.get(path);
+    const p = (async () => {
+      const { repo, token } = cfg();
+      const r = await fetch(`https://api.github.com/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${DEFAULTS.branch}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.raw', 'X-GitHub-Api-Version': '2022-11-28' }, cache: 'no-store',
+      });
+      if (!r.ok) { const e = new Error(String(r.status)); e.status = r.status; throw e; }
+      return r.blob();
+    })();
+    cache.set(path, p);
+    p.catch(() => cache.delete(path));
+    return p;
+  }
+
+  async function loadResource(det) {
+    const body = det.querySelector('.res-body');
+    if (body.dataset.loaded) return;
+    body.dataset.loaded = '1';
+    const path = det.dataset.path;
+    try {
+      const blob = await fetchRaw(path);
+      const kind = resKind(path);
+      if (kind === 'image') body.innerHTML = `<img alt="${esc(path.split('/').pop())}" src="${URL.createObjectURL(blob)}">`;
+      else if (kind === 'pdf') body.innerHTML = `<a href="${URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }))}" target="_blank" rel="noopener">open the PDF</a>`;
+      else body.innerHTML = `<div class="md">${renderMd(await blob.text())}</div>`;
+    } catch (e) {
+      body.dataset.loaded = '';
+      body.textContent = e.status === 404 ? 'not in the mirror yet (the laptop pushes it within two minutes)' : `couldn't load it: ${e.message}`;
+    }
+  }
+
+  async function loadReply(name, st, box) {
+    try {
+      const text = await (await fetchRaw(`requests/${name}.reply.md`)).text();
+      const lines = text.split('\n');
+      const status = lines.find((l) => /^(finished|timed out|not started|failed)/.test(l)) || '';
+      st.textContent = `done: ${status || 'answered'}`;
+      // the reply's own words, after its header and the queue line
+      const bodyAt = lines.findIndex((l, k) => k > 2 && l && !/^(started|boundary:|finished|timed out|not started|failed|_)/.test(l));
+      if (box) box.innerHTML = `<details><summary>Flint's reply</summary><div class="md">${renderMd(lines.slice(bodyAt < 0 ? 0 : bodyAt).join('\n'))}</div></details>`;
+    } catch (e) {
+      cache.delete(`requests/${name}.reply.md`);
+      if (e.status === 404) st.textContent = `Flint has it (${name}): running or waiting its turn`;
+    }
   }
 
   // ---- edits -------------------------------------------------------------
@@ -348,6 +719,40 @@
     } catch (e) { fail(e); } finally { busy = false; input.disabled = false; }
   }
 
+  // Taylor's answer (B238): one Decided line under the entry, one commit. `todo sync` files it to the request
+  // box within two minutes and marks the entry `acted=`; the page never ticks it (the Then is a session's work).
+  async function decide(it, answer, li) {
+    const a = cleanAnswer(answer);
+    if (!a) { setStatus('type an answer first', true); return; }
+    if (busy) return;
+    busy = true; li.classList.add('pending'); setStatus('sending…');
+    try {
+      await withRetry(async () => {
+        await save(applyDecision(doc.text, it.raw, a, new Date()), `decide: ${it.title.slice(0, 60)}`);
+      })();
+      drafts.delete(it.id);
+      render(); setStatus(`decided: ${a.slice(0, 60)} — Flint gets it within two minutes`);
+    } catch (e) {
+      li.classList.remove('pending'); fail(e);
+    } finally { busy = false; }
+  }
+
+  async function cancelItem(it, why, li) {
+    const w = cleanAnswer(why);
+    if (!w) { setStatus('say why first: the reason is the record', true); return; }
+    if (busy) return;
+    busy = true; li.classList.add('pending'); setStatus('cancelling…');
+    try {
+      await withRetry(async () => {
+        await save(applyCancel(doc.text, it.raw, w, new Date()), `cancel: ${it.title.slice(0, 60)}`);
+      })();
+      drafts.delete(it.id + '|cancel');
+      render(); setStatus(`cancelled: ${it.title.slice(0, 50)} — Flint records it within two minutes`);
+    } catch (e) {
+      li.classList.remove('pending'); fail(e);
+    } finally { busy = false; }
+  }
+
   function fail(e) {
     if (e.status === 401) { setStatus('token rejected — paste a fresh one', true); ls.del(LS.token); showSetup(); return; }
     if (e.status === 404) { setStatus(`not found: check the repo/path and that the token can read ${cfg().repo}`, true); showSetup(); return; }
@@ -381,8 +786,10 @@
     setStatus('loading…');
     try { await load(); } catch (e) { fail(e); }
   }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && cfg().token && !busy) load().catch(() => {}); });
-  setInterval(() => { if (!document.hidden && cfg().token && !busy) load().catch(() => {}); }, 60000);
+  // the reload waits while an answer is being typed (the draft survives a reload, the cursor wouldn't)
+  const typing = () => { const a = document.activeElement; return !!(a && a.closest && a.closest('#list') && /^(INPUT|TEXTAREA)$/.test(a.tagName)); };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && cfg().token && !busy && !typing()) load().catch(() => {}); });
+  setInterval(() => { if (!document.hidden && cfg().token && !busy && !typing()) load().catch(() => {}); }, 60000);
   start();
 })();
 </script>
